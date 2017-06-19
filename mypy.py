@@ -20,7 +20,7 @@ sys.setrecursionlimit(2000)
 # print("{0:.3f}".format(1/3))
 def trigger10ktimes():
     while True:
-        with urllib.request.urlopen('http://NodeECS90-EcsElb-1UM7C2OPPOZCB-1863189502.ap-southeast-1.elb.amazonaws.com') as response:
+        with urllib.request.urlopen('http://NodeECS92-EcsElb-1L6MD2ZWJI59I-1840691753.ap-southeast-1.elb.amazonaws.com') as response:
             html = response.read()
             print("{}-{}".format(os.getpid(), html))
 

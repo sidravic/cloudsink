@@ -546,7 +546,7 @@
         },
         "StepScalingPolicyConfiguration":{
           "AdjustmentType":"PercentChangeInCapacity",
-          "Cooldown":60,
+          "Cooldown":300,
           "MetricAggregationType":"Maximum",
           "StepAdjustments":[
             {
@@ -563,7 +563,7 @@
       "Properties": {
         "AdjustmentType":"ChangeInCapacity",
         "AutoScalingGroupName": { "Ref": "ECSAutoScalingGroup"},
-        "Cooldown":"60",
+        "Cooldown":"300",
         "ScalingAdjustment": "1"
       }
     },
@@ -583,7 +583,7 @@
       "DependsOn": ["ServiceScalingPolicy", "EcsService"],
       "Properties":{
         "ActionsEnabled": true,
-        "AlarmName":"ScaleOn5rp5m",
+        "AlarmName":"ScaleUpOn5rp5m",
         "EvaluationPeriods":"1",
         "Statistic":"Sum",
         "Threshold":"5",
@@ -605,6 +605,37 @@
           }
         ],
         "ComparisonOperator":"GreaterThanOrEqualToThreshold",
+        "MetricName":"RequestCount"
+      }
+    },
+
+    "ELBAlarmScaleDown":{
+      "Type":"AWS::CloudWatch::Alarm",
+      "DependsOn": ["ServiceScalingPolicy", "EcsService"],
+      "Properties":{
+        "ActionsEnabled": true,
+        "AlarmName":"ScaleDownOn5rp5m",
+        "EvaluationPeriods":"1",
+        "Statistic":"Sum",
+        "Threshold":"5",
+        "AlarmDescription":"Alarm loads boots instance when more then 5 request per minute",
+        "Period":"300",
+        "AlarmActions":[
+          {
+            "Ref":"InstanceScaleDownPolicy"
+          },
+          {
+            "Ref":"ServiceScalingPolicy"
+          }
+        ],
+        "Namespace":"AWS/ELB",
+        "Dimensions":[
+          {
+            "Name":"Service",
+            "Value": "ELB"
+          }
+        ],
+        "ComparisonOperator":"LessThanThreshold",
         "MetricName":"RequestCount"
       }
     },
