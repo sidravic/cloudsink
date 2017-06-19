@@ -1,0 +1,230 @@
+{
+  "Mappings": {
+    "AWSRegionToAMI":{
+      "us-east-1":{
+        "AMI":"ami-6df8fe7a"
+      },
+      "us-east-2":{
+        "AMI":"ami-c6b5efa3"
+      },
+      "ap-northeast-1":{
+        "AMI":"ami-08f7956f"
+      },
+      "ap-southeast-1":{
+        "AMI":"ami-f4832f97"
+      },
+      "ca-central-1":{
+        "AMI":"ami-be45f7da"
+      },
+      "ap-southeast-2":{
+        "AMI":"ami-774b7314"
+      },
+      "us-west-2":{
+        "AMI":"ami-a2ca61c2"
+      },
+      "us-west-1":{
+        "AMI":"ami-1eda8d7e"
+      },
+      "eu-central-1":{
+        "AMI":"ami-e012d48f"
+      },
+      "eu-west-1":{
+        "AMI":"ami-ba346ec9"
+      },
+      "eu-west-2":{
+        "AMI":"ami-42c5cf26"
+      }
+    }
+  },
+
+  "Resources": {
+    "NodeApiECSCluster": {
+      "Type":"AWS::ECS::Cluster"
+    },
+    "ECSServiceNodeAPI": {
+      "DependsOn": ["NodeApiAutoScalingGroup", "NodeApiECSRole"],
+      "Type":"AWS::ECS::Service",
+      "Properties": {
+        "Cluster": { "Ref": "NodeApiECSCluster"  },
+        "LoadBalancers": [
+          {
+            "ContainerName": "UnityApi",
+            "ContainerPort":"80",
+            "LoadBalancerName": { "Ref":"NodeApiLoadbalancer" }
+          }
+        ],
+        "ServiceName": "NodeApiService",
+        "DesiredCount": 1,
+        "TaskDefinition": { "Ref":"NodeApiTaskDefinition"},
+        "Role": { "Ref": "NodeApiECSRole"}
+      }
+    },
+    "NodeApiTaskDefinition": {
+      "Type":"AWS::ECS::TaskDefinition",
+      "Properties": {
+        "ContainerDefinitions": [
+          {
+            "Name":"UnityApi",
+            "Cpu":512,
+            "Essential":true,
+            "Image": "092773900410.dkr.ecr.ap-southeast-1.amazonaws.com/unity:latest",
+            "Memory": 488,
+            "PortMappings": [
+              {
+                "HostPort":80,
+                "ContainerPort":80
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "NodeApiAutoScalingGroup": {
+      "Type":"AWS::AutoScaling::AutoScalingGroup",
+      "UpdatePolicy": {
+        "AutoScalingRollingUpdate": {
+          "MinInstanceInService": 1,
+          "MaxBatchSize": 1,
+          "PauseTime": "PT15M",
+          "WaitOnResourceSignals": "true"
+        }
+      },
+      "Properties": {
+        "AvailabilityZones": {"Fn::GetAZs" : "" },
+        "LaunchConfigurationName": {
+          "Ref": "NodeApiLaunchConfiguration"
+        },
+        "MinSize": "1",
+        "MaxSize": "2"
+      }
+    },
+    "NodeApiLaunchConfiguration": {
+      "Type":"AWS::AutoScaling::LaunchConfiguration",
+      "Properties": {
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Sub": "#!/bin/bash\nyum install -y aws-cfn-bootstrap\n/opt/aws/bin/cfn-init -v --region ${AWS::Region} --stack ${AWS::StackName} --resource LaunchConfiguration\n/opt/aws/bin/cfn-signal -e $? --region ${AWS::Region} --stack ${AWS::StackName} --resource AutoScalingGroup\n"
+          }
+        },
+        "ImageId": {
+          "Fn::FindInMap": [
+            "AWSRegionToAMI",
+            {
+              "Ref": "AWS::Region"
+            },
+            "AMI"
+          ]
+        },
+        "KeyName": {
+          "Ref": "KeyName"
+        },
+        "SecurityGroups": [{
+          "Ref": "NodeApiSecurityGroup"
+        }],
+        "InstanceType": {
+          "Ref": "InstanceType"
+        }
+      }
+    },
+    "NodeApiInstanceProfile":{
+      "Type":"AWS::IAM::InstanceProfile",
+      "Properties":{
+        "Path":"/",
+        "Roles":[
+          {
+            "Ref":"NodeApiECSRole"
+          }
+        ]
+      }
+    },
+    "NodeApiECSRole":{
+      "Type":"AWS::IAM::Role",
+      "Properties":{
+        "Path":"/",
+        "AssumeRolePolicyDocument":"{\n    \"Statement\": [{\n        \"Effect\": \"Allow\",\n        \"Principal\": { \"Service\": [ \"ec2.amazonaws.com\" ]},\n        \"Action\": [ \"sts:AssumeRole\" ]\n    }]\n}\n",
+        "ManagedPolicyArns":[
+          "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceRole"
+        ],
+        "RoleName":{
+          "Fn::Sub":"ecs-${AWS::StackName}-${AWS::Region}"
+        }
+      }
+    },
+    "NodeApiLoadbalancer":{
+      "Type":"AWS::ElasticLoadBalancing::LoadBalancer",
+      "Properties":{
+        "AvailabilityZones": {"Fn::GetAZs":""},
+        "Instances": [{"Ref":"NodeApi"}],
+        "Listeners": [{
+          "LoadBalancerPort":"80",
+          "InstancePort": "80",
+          "Protocol":"HTTP"
+        }]
+      }
+    },
+    "NodeApiSecurityGroup":{
+      "Type":"AWS::EC2::SecurityGroup",
+      "Properties":{
+        "GroupName":"node-api-security-group",
+        "GroupDescription":"Security Group for a Node API",
+        "SecurityGroupIngress":{
+          "IpProtocol":"tcp",
+          "FromPort":"80",
+          "ToPort":"80",
+          "CidrIp":"0.0.0.0/0"
+        }
+      }
+    },
+    "NodeApi":{
+      "Type":"AWS::EC2::Instance",
+      "Properties": {
+        "InstanceType": {"Ref":"InstanceType"},
+        "KeyName": { "Ref":"KeyName"},
+        "SecurityGroups": [{ "Ref": "NodeApiSecurityGroup"}],
+        "ImageId": { "Fn::FindInMap": ["AWSRegionToAMI", { "Ref": "AWS::Region"}, "AMI" ] }
+      }
+    }
+  },
+
+  "Parameters": {
+    "InstanceType":{
+      "Description":"Webserver ec2 instance type",
+      "Type":"String",
+      "Default":"t2.micro",
+      "AllowedValues": [
+        "t2.nano",
+        "t2.micro",
+        "t2.small",
+        "t2.small",
+        "t2.medium",
+        "t2.large",
+        "t2.xlarge",
+        "t2.2xlarge",
+        "m4.large",
+        "m4.xlarge",
+        "m4.2xlarge",
+        "m4.4xlarge",
+        "m4.10xlarge",
+        "m4.16xlarge",
+        "m3.medium",
+        "m3.large",
+        "m3.xlarge",
+        "m3.2xlarge",
+        "c4.large",
+        "c4.xlarge",
+        "c4.2xlarge",
+        "c4.4xlarge",
+        "c4.8xlarge"
+      ]
+    },
+    "KeyName":{
+      "Description": "EC2 Keypair name",
+      "Type":"AWS::EC2::KeyPair::KeyName",
+      "Default":"sid-ecs-keypair",
+      "ConstraintDescription":"Must be the name of an existing EC2 Keypair."
+    }
+  },
+
+  "AWSTemplateFormatVersion":"2010-09-09",
+  "Description":"Node api service creation with cloud formation"
+}

@@ -1,0 +1,368 @@
+{
+  "Outputs": {
+    "StackId": {
+      "Description": "Stack ID",
+      "Value": {
+        "Ref": "AWS::StackId"
+      }
+    },
+
+    "StackName": {
+      "Description": "The name of the stack",
+      "Value": {
+        "Ref": "AWS::StackName"
+      }
+    },
+
+    "ServiceURL": {
+      "Description":"API endpoint",
+      "Value": {
+        "Fn::Sub": "http://${EcsElb.DNSName}"
+      }
+    }
+  },
+
+  "Mappings": {
+    "AWSRegionToAMI":{
+      "us-east-1":{
+        "AMI":"ami-6df8fe7a"
+      },
+      "us-east-2":{
+        "AMI":"ami-c6b5efa3"
+      },
+      "ap-northeast-1":{
+        "AMI":"ami-08f7956f"
+      },
+      "ap-southeast-1":{
+        "AMI":"ami-b4ae1dd7"
+      },
+      "ca-central-1":{
+        "AMI":"ami-be45f7da"
+      },
+      "ap-southeast-2":{
+        "AMI":"ami-774b7314"
+      },
+      "us-west-2":{
+        "AMI":"ami-a2ca61c2"
+      },
+      "us-west-1":{
+        "AMI":"ami-1eda8d7e"
+      },
+      "eu-central-1":{
+        "AMI":"ami-e012d48f"
+      },
+      "eu-west-1":{
+        "AMI":"ami-ba346ec9"
+      },
+      "eu-west-2":{
+        "AMI":"ami-42c5cf26"
+      }
+    }
+  },
+
+  "Resources": {
+    "EcsCluster": {
+      "Type":"AWS::ECS::Cluster",
+      "Properties": {
+        "ClusterName": { "Ref": "AWS::StackName" }
+      }
+    },
+    "EcsService": {
+      "Type":"AWS::ECS::Service",
+      "Properties":{
+        "Cluster": { "Ref": "EcsCluster" },
+        "DesiredCount": "2",
+        "DeploymentConfiguration": {
+          "MaximumPercent": 100,
+          "MinimumHealthyPercent":0
+        },
+        "LoadBalancers": [{
+          "ContainerName": "api",
+          "LoadBalancerName": {"Ref": "EcsElb"},
+          "ContainerPort": "4001"
+        }],
+        "Role": {
+          "Ref": "EcsServiceRole"
+        },
+        "TaskDefinition": {
+          "Ref":"NodeApiTaskDefinition"
+        }
+      },
+      "DependsOn": ["ECSAutoScalingGroup"]
+    },
+
+    "EcsElb": {
+      "Type": "AWS::ElasticLoadBalancing::LoadBalancer",
+      "Properties": {
+        "LoadBalancerName": "EcsElb",
+        "CrossZone": true,
+        "AvailabilityZones": ["ap-southeast-1a", "ap-southeast-1b"],
+        "Listeners": [
+          {
+            "LoadBalancerPort":"80",
+            "InstancePort":"4001",
+            "Protocol": "HTTP"
+          }
+        ],
+        "HealthCheck":{
+          "Target":"HTTP:80/",
+          "HealthyThreshold":"2",
+          "UnhealthyThreshold":"10",
+          "Interval":"10",
+          "Timeout":"5"
+        }
+      }
+    },
+
+    "EcsServiceRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument":{
+          "Statement":[
+            {
+              "Effect":"Allow",
+              "Principal":{
+                "Service":[
+                  "ecs.amazonaws.com"
+                ]
+              },
+              "Action":[
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "Path": "/",
+        "Policies":[
+          {
+            "PolicyName":"ecs-service",
+            "PolicyDocument":{
+              "Version": "2012-10-17",
+              "Statement":[
+                {
+                  "Effect":"Allow",
+                  "Action":[
+                    "ec2:AuthorizeSecurityGroupIngress",
+                    "ec2:Describe*",
+                    "elasticloadbalancing:DeregisterInstancesFromLoadBalancer",
+                    "elasticloadbalancing:DeregisterTargets",
+                    "elasticloadbalancing:Describe*",
+                    "elasticloadbalancing:RegisterInstancesWithLoadBalancer",
+                    "elasticloadbalancing:RegisterTargets"
+                  ],
+                  "Resource":"*"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+
+    "NodeApiTaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "ContainerDefinitions": [
+          {
+            "Name": "api",
+            "Image": "092773900410.dkr.ecr.ap-southeast-1.amazonaws.com/unity:latest",
+            "Cpu": 512,
+            "Command": [],
+            "Memory": 488,
+            "PortMappings": [{
+              "HostPort":4001,
+              "ContainerPort":4001
+            }]
+          }
+        ]
+      }
+    },
+
+    "ECSAutoScalingGroup": {
+      "DependsOn": ["EcsElb"],
+      "Type":"AWS::AutoScaling::AutoScalingGroup",
+      "UpdatePolicy": {
+        "AutoScalingRollingUpdate": {
+          "MinInstanceInService": 1,
+          "MaxBatchSize": 1,
+          "PauseTime": "PT1M",
+          "WaitOnResourceSignals": false
+        }
+      },
+      "CreationPolicy":{
+        "ResourceSignal":{
+          "Count": "0",
+          "Timeout":"PT15M"
+        }
+      },
+      "Properties": {
+        "AvailabilityZones": ["ap-southeast-1a", "ap-southeast-1b"],
+        "LaunchConfigurationName": { "Ref": "ContainerInstances"},
+        "MinSize": "1",
+        "MaxSize": "2",
+        "DesiredCapacity": "2",
+        "VPCZoneIdentifier": [
+          {
+            "Ref":"Subnet1"
+          },
+          {
+            "Ref":"Subnet2"
+          }
+        ]
+      }
+    },
+
+    "ContainerInstances": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Properties": {
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Sub": "#!/bin/bash\nyum install -y aws-cfn-bootstrap\n/opt/aws/bin/cfn-init -v --region ap-southeast-1 --stack ${AWS::StackName} --resource LaunchConfiguration\n/opt/aws/bin/cfn-signal -e $? --region ap-southeast-1 --stack ${AWS::StackName} --resource AutoScalingGroup\n"
+          }
+        },
+        "ImageId": "ami-b4ae1dd7",
+        "KeyName": {
+          "Ref": "KeyName"
+        },
+        "SecurityGroups": [{
+          "Ref": "SecurityGroup"
+        }],
+        "InstanceType": {
+          "Ref": "InstanceType"
+        }
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Init":{
+          "config":{
+            "files":{
+              "/etc/cfn/cfn-hup.conf":{
+                "owner":"root",
+                "content":{
+                  "Fn::Sub":"[main]\nstack=${AWS::StackId}\nregion=${AWS::Region}\n"
+                },
+                "group":"root",
+                "mode":256
+              },
+              "/etc/cfn/hooks.d/cfn-auto-reloader.conf":{
+                "content":{
+                  "Fn::Sub":"[cfn-auto-reloader-hook]\ntriggers=post.update\npath=Resources.ContainerInstances.Metadata.AWS::CloudFormation::Init\naction=/opt/aws/bin/cfn-init -v --region ${AWS::Region} --stack ${AWS::StackName} --resource LaunchConfiguration\n"
+                }
+              }
+            },
+            "services":{
+              "sysvinit":{
+                "cfn-hup":{
+                  "files":[
+                    "/etc/cfn/cfn-hup.conf",
+                    "/etc/cfn/hooks.d/cfn-auto-reloader.conf"
+                  ],
+                  "ensureRunning":true,
+                  "enabled":true
+                }
+              }
+            },
+            "commands":{
+              "01_add_instance_to_cluster":{
+                "command":{
+                  "Fn::Sub":"echo ECS_CLUSTER=${EcsCluster} > /etc/ecs/ecs.config"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "SecurityGroup":{
+      "Type":"AWS::EC2::SecurityGroup",
+      "Properties":{
+        "GroupName":"node-api-security-group",
+        "GroupDescription":"Security Group for a Node API",
+        "SecurityGroupIngress":{
+          "IpProtocol":"tcp",
+          "FromPort":"4001",
+          "ToPort":"4001",
+          "CidrIp":"0.0.0.0/0"
+        }
+      }
+
+    }
+  },
+
+  "Parameters": {
+    "InstanceType":{
+      "Description":"Webserver ec2 instance type",
+      "Type":"String",
+      "Default":"t2.small",
+      "AllowedValues": [
+        "t2.nano",
+        "t2.micro",
+        "t2.small",
+        "t2.small",
+        "t2.medium",
+        "t2.large",
+        "t2.xlarge",
+        "t2.2xlarge",
+        "m4.large",
+        "m4.xlarge",
+        "m4.2xlarge",
+        "m4.4xlarge",
+        "m4.10xlarge",
+        "m4.16xlarge",
+        "m3.medium",
+        "m3.large",
+        "m3.xlarge",
+        "m3.2xlarge",
+        "c4.large",
+        "c4.xlarge",
+        "c4.2xlarge",
+        "c4.4xlarge",
+        "c4.8xlarge"
+      ]
+    },
+    "KeyName":{
+      "Description": "EC2 Keypair name",
+      "Type":"AWS::EC2::KeyPair::KeyName",
+      "Default":"sid-ecs-keypair",
+      "ConstraintDescription":"Must be the name of an existing EC2 Keypair."
+    },
+    "VPC":{
+      "Default":"vpc-46538022",
+      "Type":"AWS::EC2::VPC::Id",
+      "Description":""
+    },
+    "Environment":{
+      "Default":"staging",
+      "Type":"String",
+      "Description":""
+    },
+    "Subnet2":{
+      "Default":"subnet-7ca5250a",
+      "Type":"AWS::EC2::Subnet::Id",
+      "Description":""
+    },
+    "Subnet1":{
+      "Default":"subnet-26a53542",
+      "Type":"AWS::EC2::Subnet::Id",
+      "Description":""
+    },
+    "MaxSize":{
+      "Default":10,
+      "Type":"Number",
+      "Description":""
+    },
+    "NotificationSnsArn":{
+      "Default":"arn:aws:sns:ap-southeast-1:725827686899:dev-getsimpl",
+      "Type":"String",
+      "Description":""
+    },
+    "ClusterSize":{
+      "Default":2,
+      "Type":"Number",
+      "Description":""
+    }
+  },
+
+  "AWSTemplateFormatVersion":"2010-09-09",
+  "Description":"Node api service creation with cloud formation"
+}

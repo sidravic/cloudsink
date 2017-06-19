@@ -1,0 +1,607 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Creates a VPC containing an ECS cluster, ASG and ELB",
+  "Parameters": {
+    "AvailabilityZone1": {
+      "Type": "AWS::EC2::AvailabilityZone::Name",
+      "Description": "Availability Zone #1 - must be available in your account and in the same region as AvailabilityZone2"
+    },
+    "AvailabilityZone2": {
+      "Type": "AWS::EC2::AvailabilityZone::Name",
+      "Description": "Availability Zone #2 - must be available in your account and in the same region as AvailabilityZone1"
+    },
+    "InstanceType": {
+      "Type": "String",
+      "Description": "EC2 instance type",
+      "Default": "t2.micro",
+      "AllowedValues": [
+        "t2.micro",
+        "t2.small",
+        "t2.medium",
+        "t2.large",
+        "m3.medium",
+        "m3.large",
+        "m3.xlarge",
+        "m3.2xlarge",
+        "m4.large",
+        "m4.xlarge",
+        "m4.2xlarge",
+        "m4.4xlarge",
+        "m4.10xlarge",
+        "c4.large",
+        "c4.xlarge",
+        "c4.2xlarge",
+        "c4.4xlarge",
+        "c4.8xlarge",
+        "c3.large",
+        "c3.xlarge",
+        "c3.2xlarge",
+        "c3.4xlarge",
+        "c3.8xlarge",
+        "r3.large",
+        "r3.xlarge",
+        "r3.2xlarge",
+        "r3.4xlarge",
+        "r3.8xlarge",
+        "i2.xlarge",
+        "i2.2xlarge",
+        "i2.4xlarge",
+        "i2.8xlarge"
+      ],
+      "ConstraintDescription": "must be a general purpose (T2 or M4) EC2 instance type, equal to or larger than a \"t2.small\"."
+    },
+    "KeyName":{
+      "Description": "EC2 Keypair name",
+      "Type":"AWS::EC2::KeyPair::KeyName",
+      "Default":"sid-ecs-keypair",
+      "ConstraintDescription":"Must be the name of an existing EC2 Keypair."
+    },
+    "DefaultElbSecurityGroupId": {
+      "Description":"Default ELB security group when nothing is specificed.",
+      "Type":"AWS::EC2::SecurityGroup::Id",
+      "Default": "sg-2ea89e49"
+    },
+    "VPC":{
+      "Default":"vpc-46538022",
+      "Type":"AWS::EC2::VPC::Id",
+      "Description":""
+    },
+    "SubnetID":{
+      "Type":"List<AWS::EC2::Subnet::Id>",
+      "Description":"Select at two subnets in your selected VPC."
+    },
+    "DesiredCapacity":{
+      "Type":"Number",
+      "Default":"2",
+      "Description":"Number of instances to launch in your ECS cluster."
+    },
+    "Subnet2":{
+      "Default":"subnet-7ca5250a",
+      "Type":"AWS::EC2::Subnet::Id",
+      "Description":""
+    },
+    "Subnet1":{
+      "Default":"subnet-26a53542",
+      "Type":"AWS::EC2::Subnet::Id",
+      "Description":""
+    },
+    "MaxSize":{
+      "Type":"Number",
+      "Default":"2",
+      "Description":"Maximum number of instances that can be launched in your ECS cluster."
+    },
+    "PublicAccessCIDR": {
+      "Type": "String",
+      "Description": "CIDR block that will have access to AWS resources. Use http://checkip.amazonaws.com/ to get your current IP Address.",
+      "AllowedPattern": "\\d+\\.\\d+\\.\\d+\\.\\d+/\\d+"
+    }
+  },
+  "Mappings": {
+    "RegionAmazonECSOptimizedAMIMapping": {
+      "us-east-1": {
+        "AMI": "ami-52cd5445"
+      },
+      "us-west-1": {
+        "AMI": "ami-efa1e28f"
+      },
+      "us-west-2": {
+        "AMI": "ami-a426edc4"
+      },
+      "eu-west-1": {
+        "AMI": "ami-7b244e08"
+      },
+      "eu-central-1": {
+        "AMI": "ami-721aec1d"
+      },
+      "ap-northeast-1": {
+        "AMI": "ami-058a4964"
+      },
+      "ap-southeast-1": {
+        "AMI": "ami-a900a3ca"
+      },
+      "ap-southeast-2": {
+        "AMI": "ami-5781be34"
+      }
+    }
+  },
+  "Resources": {
+    "ECSAutoScalingGroup": {
+      "CreationPolicy": {
+        "ResourceSignal": {
+          "Timeout": "PT30M"
+        }
+      },
+      "Properties": {
+        "DesiredCapacity": 2,
+        "LaunchConfigurationName": {
+          "Ref": "ECSLaunchConfig"
+        },
+        "MaxSize": 2,
+        "MinSize": 2,
+        "VPCZoneIdentifier": [
+          {
+            "Ref": "Subnet1"
+          },
+          {
+            "Ref": "Subnet2"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Ref": "AWS::StackName"
+            },
+            "PropagateAtLaunch": true
+          }
+        ]
+      },
+      "UpdatePolicy": {
+        "AutoScalingRollingUpdate": {
+          "MaxBatchSize": "2",
+          "MinInstancesInService": "1",
+          "PauseTime": "PT5M",
+          "WaitOnResourceSignals": "true"
+        }
+      },
+      "Type": "AWS::AutoScaling::AutoScalingGroup"
+    },
+    "ECSLaunchConfig": {
+      "Properties": {
+        "AssociatePublicIpAddress": true,
+        "IamInstanceProfile": {
+          "Ref": "ECSInstanceProfile"
+        },
+        "ImageId": {
+          "Fn::FindInMap": [
+            "RegionAmazonECSOptimizedAMIMapping",
+            {
+              "Ref": "AWS::Region"
+            },
+            "AMI"
+          ]
+        },
+        "InstanceType": {
+          "Ref": "InstanceType"
+        },
+        "KeyName": {
+          "Ref": "KeyName"
+        },
+        "SecurityGroups": [
+          {
+            "Ref": "ECSClusterSecurityGroup"
+          },
+          {
+            "Ref": "ECSContainerInstancesSecurityGroup"
+          }
+        ],
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "#!/bin/bash\n",
+                "set -ex\n",
+                "yum install -y aws-cfn-bootstrap\n",
+                "/opt/aws/bin/cfn-init -v ",
+                "  --stack ",
+                {
+                  "Ref": "AWS::StackName"
+                },
+                "  --resource ECSLaunchConfig",
+                "  --region ",
+                {
+                  "Ref": "AWS::Region"
+                },
+                "\n",
+                "echo ECS_CLUSTER=",
+                {
+                  "Ref": "ECSCluster"
+                },
+                " >> /etc/ecs/ecs.config\n",
+                "mkdir -p /mnt/efs\n",
+                "aws_az=\"$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)\"\n",
+                "aws_region=\"${aws_az:0:${#aws_az}-1}\"\n",
+                "echo \"${aws_az}.",
+                {
+                  "Ref": "AWS::StackName"
+                },
+                "  --resource ECSAutoScalingGroup",
+                "  --region ",
+                {
+                  "Ref": "AWS::Region"
+                },
+                "\n",
+                "/opt/aws/bin/cfn-signal -e $? --region",
+                {
+                  "Ref": "AWS::Region"
+                },
+                "--stack",
+                {"Ref": "AWS::StackName"},
+                "--resource AutoScalingGroup",
+                "\n"
+              ]
+            ]
+          }
+        }
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Init": {
+          "config": {
+            "packages": {
+              "yum": {
+                "nfs-utils": []
+              }
+            }
+          }
+        }
+      },
+      "Type": "AWS::AutoScaling::LaunchConfiguration"
+    },
+    "ECSClusterSecurityGroup": {
+      "Properties": {
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "GroupDescription": "Self-referencing security group to allow all traffic between ECS container instances and ELBs"
+      },
+      "Type": "AWS::EC2::SecurityGroup"
+    },
+    "ECSClusterSecurityGroupEgress": {
+      "Properties": {
+        "DestinationSecurityGroupId": {
+          "Ref": "ECSClusterSecurityGroup"
+        },
+        "FromPort": "-1",
+        "GroupId": {
+          "Ref": "ECSClusterSecurityGroup"
+        },
+        "IpProtocol": "-1",
+        "ToPort": "-1"
+      },
+      "Type": "AWS::EC2::SecurityGroupEgress"
+    },
+    "ECSClusterSecurityGroupIngress": {
+      "Properties": {
+        "FromPort": "-1",
+        "GroupId": {
+          "Ref": "ECSClusterSecurityGroup"
+        },
+        "IpProtocol": "-1",
+        "SourceSecurityGroupId": {
+          "Ref": "ECSClusterSecurityGroup"
+        },
+        "ToPort": "-1"
+      },
+      "Type": "AWS::EC2::SecurityGroupIngress"
+    },
+    "ECSALB":{
+      "Type":"AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "Properties":{
+        "Name":"ECSALB",
+        "Scheme":"internet-facing",
+        "LoadBalancerAttributes":[
+          {
+            "Key":"idle_timeout.timeout_seconds",
+            "Value":"30"
+          }
+        ],
+        "Subnets":{
+          "Ref":"SubnetID"
+        },
+        "SecurityGroups":[
+          {
+            "Ref":"ECSClusterSecurityGroup"
+          }
+        ]
+      }
+    },
+    "ALBListener":{
+      "Type":"AWS::ElasticLoadBalancingV2::Listener",
+      "DependsOn":"ECSServiceRole",
+      "Properties":{
+        "DefaultActions":[
+          {
+            "Type":"forward",
+            "TargetGroupArn":{
+              "Ref":"ECSTG"
+            }
+          }
+        ],
+        "LoadBalancerArn":{
+          "Ref":"ECSALB"
+        },
+        "Port":"80",
+        "Protocol":"HTTP"
+      }
+    },
+    "ECSALBListenerRule":{
+      "Type":"AWS::ElasticLoadBalancingV2::ListenerRule",
+      "DependsOn":"ALBListener",
+      "Properties":{
+        "Actions":[
+          {
+            "Type":"forward",
+            "TargetGroupArn":{
+              "Ref":"ECSTG"
+            }
+          }
+        ],
+        "Conditions":[
+          {
+            "Field":"path-pattern",
+            "Values":[
+              "/"
+            ]
+          }
+        ],
+        "ListenerArn":{
+          "Ref":"ALBListener"
+        },
+        "Priority":1
+      }
+    },
+    "ECSTG":{
+      "Type":"AWS::ElasticLoadBalancingV2::TargetGroup",
+      "DependsOn":"ECSALB",
+      "Properties":{
+        "HealthCheckIntervalSeconds":10,
+        "HealthCheckPath":"/",
+        "HealthCheckProtocol":"HTTP",
+        "HealthCheckTimeoutSeconds":5,
+        "HealthyThresholdCount":2,
+        "Name":"ECSTG",
+        "Port":4001,
+        "Protocol":"HTTP",
+        "UnhealthyThresholdCount":2,
+        "VpcId":{
+          "Ref":"VPC"
+        }
+      }
+    },
+
+    "ECSContainerInstancesSecurityGroup": {
+      "Properties": {
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "GroupDescription": "Security group for ECS container instances",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "22",
+            "ToPort": "22",
+            "CidrIp": {
+              "Ref": "PublicAccessCIDR"
+            }
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "4001",
+            "ToPort": "4001",
+            "CidrIp": {
+              "Ref": "PublicAccessCIDR"
+            }
+          }
+        ]
+      },
+      "Type": "AWS::EC2::SecurityGroup"
+    },
+    "ECSCluster": {
+      "Type": "AWS::ECS::Cluster"
+    },
+
+    "ECSInstanceProfile": {
+      "Properties": {
+        "Path": "/",
+        "Roles": [
+          {
+            "Ref": "ECSInstanceRole"
+          }
+        ]
+      },
+      "Type": "AWS::IAM::InstanceProfile"
+    },
+    "ECSInstanceRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "ec2.amazonaws.com",
+                  "ecs.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": "AmazonEC2ContainerServiceforEC2Role",
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecs:CreateCluster",
+                    "ecs:DeregisterContainerInstance",
+                    "ecs:DiscoverPollEndpoint",
+                    "ecs:Poll",
+                    "ecs:RegisterContainerInstance",
+                    "ecs:StartTelemetrySession",
+                    "ecs:Submit*",
+                    "ecr:GetAuthorizationToken",
+                    "ecr:BatchCheckLayerAvailability",
+                    "ecr:GetDownloadUrlForLayer",
+                    "ecr:BatchGetImage",
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "ECSServiceRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "ecs.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": "AmazonEC2ContainerServiceRole",
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ec2:AuthorizeSecurityGroupIngress",
+                    "ec2:Describe*",
+                    "elasticloadbalancing:DeregisterInstancesFromLoadBalancer",
+                    "elasticloadbalancing:Describe*",
+                    "elasticloadbalancing:RegisterInstancesWithLoadBalancer",
+                    "elasticloadbalancing:DeregisterTargets",
+                    "elasticloadbalancing:RegisterTargets"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "EcsService": {
+      "DependsOn": "ALBListener",
+      "Properties": {
+        "Cluster": {
+          "Ref": "ECSCluster"
+        },
+        "DesiredCount": 2,
+        "LoadBalancers": [
+          {
+            "ContainerName": "api",
+            "ContainerPort": "4001",
+            "TargetGroupArn": {
+              "Ref": "ECSTG"
+            }
+          }
+        ],
+        "Role": {
+          "Ref": "ECSServiceRole"
+        },
+        "TaskDefinition": {
+          "Ref": "NodeApiTaskDefinition"
+        }
+      },
+      "Type": "AWS::ECS::Service"
+    },
+    "NodeApiTaskDefinition": {
+      "Properties": {
+        "ContainerDefinitions": [
+          {
+            "Name": "api",
+            "Image": "092773900410.dkr.ecr.ap-southeast-1.amazonaws.com/unity:latest",
+            "Hostname": "api",
+            "Cpu": 512,
+            "Memory": 512,
+            "Environment": [
+              {
+                "Name": "PORT",
+                "Value": 4001
+              }
+            ],
+            "Essential": true,
+            "PortMappings": [
+              {
+                "HostPort": 4001,
+                "ContainerPort": 4001
+              }
+            ]
+          }
+        ],
+        "Family": "UnityFamily"
+      },
+      "Type": "AWS::ECS::TaskDefinition"
+    }
+  },
+
+
+  "Outputs": {
+    "ecsservice":{
+      "Value":{
+        "Ref":"EcsService"
+      }
+    },
+    "ecscluster":{
+      "Value":{
+        "Ref":"ECSCluster"
+      }
+    },
+    "ecselb":{
+      "Description":"Your ELB DNS URL",
+      "Value":{
+        "Fn::Join":[
+          "",
+          [
+            {
+              "Fn::GetAtt":[
+                "ECSALB",
+                "DNSName"
+              ]
+            }
+          ]
+        ]
+      }
+    },
+    "taskdef":{
+      "Value":{
+        "Ref":"NodeApiTaskDefinition"
+      }
+    }
+  }
+}
